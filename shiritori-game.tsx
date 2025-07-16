@@ -388,8 +388,11 @@ export default function Component() {
               </>
             ) : gameData.gameState === "playing" ? (
               <>
-                <User className="h-5 w-5" />
-                プレイヤー{gameData.currentPlayer}のターン
+                <User className={`h-5 w-5 ${gameData.currentPlayer === 1 ? 'text-red-500' : 'text-blue-500'}`} />
+                <span className={gameData.currentPlayer === 1 ? 'text-red-500 font-bold' : 'text-blue-500 font-bold'}>
+                  プレイヤー{gameData.currentPlayer}
+                </span>
+                のターン
               </>
             ) : (
               "ゲーム待機中"
@@ -424,12 +427,13 @@ export default function Component() {
                       lastSyllable ? `「${lastSyllable}」で始まる単語を入力` : "4文字以上の単語を入力してください"
                     }
                     onKeyPress={(e) => e.key === "Enter" && inputWord.trim() && !isValidatingWord && submitWord()}
-                    className=""
+                    className={gameData.currentPlayer === 1 ? "border-red-300 focus:border-red-500 focus:ring-red-500" : "border-blue-300 focus:border-blue-500 focus:ring-blue-500"}
                     disabled={isValidatingWord}
                   />
                   <Button
                     onClick={submitWord}
                     disabled={!inputWord.trim() || isValidatingWord}
+                    className={gameData.currentPlayer === 1 ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}
                   >
                     {isValidatingWord ? (
                       <>
@@ -447,7 +451,9 @@ export default function Component() {
           )}
           {gameData.gameState === "finished" && (
             <div className="text-center space-y-4">
-              <div className="text-2xl font-bold text-green-600">プレイヤー{gameData.winner}の勝利！</div>
+              <div className={`text-2xl font-bold ${gameData.winner === 1 ? 'text-red-500' : 'text-blue-500'}`}>
+                プレイヤー{gameData.winner}の勝利！
+              </div>
               {gameData.errorMessage && <p className="text-red-500">{gameData.errorMessage}</p>}
               <Button onClick={resetGame} className="flex items-center gap-2">
                 <RotateCcw className="h-4 w-4" />
@@ -458,10 +464,17 @@ export default function Component() {
         </CardContent>
       </Card>
       <div className="grid md:grid-cols-2 gap-6">
-        <Card>
+        <Card className={`border-l-4 border-l-red-500 ${gameData.gameState === "playing" && gameData.currentPlayer === 1 ? "ring-2 ring-red-300 bg-red-50" : ""}`}>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              プレイヤー1の音節バンク<Badge variant="secondary">残り: {gameData.player1Syllables.size}個</Badge>
+            <CardTitle className="flex items-center justify-between text-red-700">
+              <span className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                プレイヤー1の音節バンク
+                {gameData.gameState === "playing" && gameData.currentPlayer === 1 && (
+                  <Badge variant="destructive" className="text-xs">現在のターン</Badge>
+                )}
+              </span>
+              <Badge variant="secondary">残り: {gameData.player1Syllables.size}個</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -474,7 +487,7 @@ export default function Component() {
                         <Badge
                           key={`p1-${s}`}
                           variant={gameData.player1Syllables.has(s) ? "default" : "secondary"}
-                          className={`text-xs w-8 justify-center ${!gameData.player1Syllables.has(s) ? "opacity-30" : ""}`}
+                          className={`text-xs w-8 justify-center ${!gameData.player1Syllables.has(s) ? "opacity-30" : ""} ${gameData.player1Syllables.has(s) ? "bg-red-100 text-red-800 border-red-300 hover:bg-red-200" : ""}`}
                         >
                           {s}
                         </Badge>
@@ -486,10 +499,17 @@ export default function Component() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className={`border-l-4 border-l-blue-500 ${gameData.gameState === "playing" && gameData.currentPlayer === 2 ? "ring-2 ring-blue-300 bg-blue-50" : ""}`}>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              プレイヤー2の音節バンク<Badge variant="secondary">残り: {gameData.player2Syllables.size}個</Badge>
+            <CardTitle className="flex items-center justify-between text-blue-700">
+              <span className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                プレイヤー2の音節バンク
+                {gameData.gameState === "playing" && gameData.currentPlayer === 2 && (
+                  <Badge variant="outline" className="text-xs border-blue-500 text-blue-600">現在のターン</Badge>
+                )}
+              </span>
+              <Badge variant="secondary">残り: {gameData.player2Syllables.size}個</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -502,7 +522,7 @@ export default function Component() {
                         <Badge
                           key={`p2-${s}`}
                           variant={gameData.player2Syllables.has(s) ? "default" : "secondary"}
-                          className={`text-xs w-8 justify-center ${!gameData.player2Syllables.has(s) ? "opacity-30" : ""}`}
+                          className={`text-xs w-8 justify-center ${!gameData.player2Syllables.has(s) ? "opacity-30" : ""} ${gameData.player2Syllables.has(s) ? "bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-200" : ""}`}
                         >
                           {s}
                         </Badge>
