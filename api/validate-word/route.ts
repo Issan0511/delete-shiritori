@@ -1,4 +1,30 @@
 import { type NextRequest, NextResponse } from "next/server"
+import kuromoji from "kuromoji"
+import path from "path"
+
+// KuromojiTokenizerのグローバルインスタンス
+let tokenizer: kuromoji.Tokenizer<kuromoji.IpadicFeatures> | null = null
+
+// トークナイザーを初期化（一度だけ実行）
+async function initTokenizer(): Promise<kuromoji.Tokenizer<kuromoji.IpadicFeatures>> {
+  if (tokenizer) {
+    return tokenizer
+  }
+
+  return new Promise((resolve, reject) => {
+    const dicPath = path.join(process.cwd(), "public", "dict")
+    kuromoji.builder({ dicPath }).build((err, _tokenizer) => {
+      if (err) {
+        console.error("Kuromoji initialization error:", err)
+        reject(err)
+      } else {
+        tokenizer = _tokenizer
+        console.log("Kuromoji tokenizer initialized successfully")
+        resolve(_tokenizer)
+      }
+    })
+  })
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,33 +34,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Word is required" }, { status: 400 })
     }
 
-    // Yahoo! JAPAN 日本語形態素解析 API を呼び出し
+    console.log("Validating word:", word)
 
-    // 新コード
-    const response = await fetch("https://jlp.yahooapis.jp/MAService/V2/parse", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Yahoo-AppID": "dj00aiZpPTRhczN3VENLUU54aCZzPWNvbnN1bWVyc2VjcmV0Jng9M2E-",
-      },
-      body: new URLSearchParams({
-        sentence: word,
-        results: "ma",
-      }),
-    });
+    // Kuromojiで形態素解析
+    const tokenizerInstance = await initTokenizer()
+    const tokens = tokenizerInstance.tokenize(word)
 
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`)
-    }
-
-    const data = await response.json()
-
-    if (data.error) {
-      throw new Error(`API error: ${data.error.message}`)
-    }
-
-    // トークンを解析して名詞かどうか判断
-    const tokens = data.ma_result?.word_list?.[0] || [];
+    console.log("Tokens:", tokens)
 
     if (tokens.length === 0) {
       return NextResponse.json({
@@ -47,23 +53,34 @@ export async function POST(request: NextRequest) {
     // 全てのトークンをチェック
     let hasNoun = false
     let hasValidParts = false
-    const tokenInfo = []
+    const tokenInfo: Array<{
+      surface: string
+      reading: string
+      baseForm: string
+      partOfSpeech: string
+    }> = []
 
     for (const token of tokens) {
-      const [surface, reading, baseForm, partOfSpeech] = token
+      const pos = token.pos || "未知"
+      
       tokenInfo.push({
-        surface,
-        reading,
-        baseForm,
-        partOfSpeech,
+        surface: token.surface_form,
+        reading: token.reading || token.surface_form,
+        baseForm: token.basic_form || token.surface_form,
+        partOfSpeech: pos,
       })
 
       // 名詞、動詞、形容詞、副詞を有効とする
-      if (partOfSpeech === "名詞" || partOfSpeech === "動詞" || partOfSpeech === "形容詞" || partOfSpeech === "副詞") {
+      if (
+        pos.includes("名詞") ||
+        pos.includes("動詞") ||
+        pos.includes("形容詞") ||
+        pos.includes("副詞")
+      ) {
         hasValidParts = true
       }
 
-      if (partOfSpeech === "名詞") {
+      if (pos.includes("名詞")) {
         hasNoun = true
       }
     }
@@ -82,6 +99,8 @@ export async function POST(request: NextRequest) {
       isValid = true
       reason = hasNoun ? "名詞として認識されました" : "有効な単語として認識されました"
     }
+
+    console.log("Validation result:", { isValid, reason, tokenInfo })
 
     return NextResponse.json({
       isValid,

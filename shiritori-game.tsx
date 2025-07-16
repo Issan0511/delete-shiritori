@@ -74,14 +74,8 @@ interface GameData {
 interface WordValidationResult {
   isValid: boolean
   reason: string
-  tokens: Array<{
-    surface: string
-    reading: string
-    baseForm: string
-    partOfSpeech: string
-  }>
-  hasNoun: boolean
-  isSingleWord: boolean
+  isExactMatch: boolean
+  foundReading?: string
 }
 
 // 最終音節取得ヘルパー
@@ -108,11 +102,6 @@ export default function Component() {
   })
 
   const [inputWord, setInputWord] = useState("")
-  const [validationState, setValidationState] = useState<{ valid: boolean; error: string; warning: string }>({
-    valid: false,
-    error: "",
-    warning: "",
-  })
   const [isValidatingWord, setIsValidatingWord] = useState(false)
   const [wordValidationCache, setWordValidationCache] = useState<Map<string, WordValidationResult>>(new Map())
 
@@ -158,7 +147,7 @@ export default function Component() {
     return syllables
   }, [])
 
-  // Yahoo APIで単語を検証
+  // Jisho APIで単語を検証
   const validateWordWithAPI = useCallback(
     async (word: string): Promise<WordValidationResult> => {
       // キャッシュをチェック
@@ -187,13 +176,11 @@ export default function Component() {
         return result
       } catch (error) {
         console.error("Word validation error:", error)
-        // エラーの場合はデフォルトで有効とする
+        // エラーの場合はデフォルトで無効とする
         const fallbackResult: WordValidationResult = {
-          isValid: true,
-          reason: "API検証に失敗しました（単語は有効として扱われます）",
-          tokens: [],
-          hasNoun: false,
-          isSingleWord: true,
+          isValid: false,
+          reason: "API検証に失敗しました",
+          isExactMatch: false,
         }
         return fallbackResult
       }
@@ -201,110 +188,112 @@ export default function Component() {
     [wordValidationCache],
   )
 
-  // 単語の検証
-  const validateWord = useCallback(
-    async (word: string): Promise<{ valid: boolean; error: string }> => {
-      // 最優先：使用済み音節チェック
-      const syllables = splitToSyllables(word)
-      const playerBank = gameData.currentPlayer === 1 ? gameData.player1Syllables : gameData.player2Syllables
-      const toRemove = syllables.slice(1)
-      for (const s of toRemove) {
-        if (!playerBank.has(s)) {
-          return { valid: false, error: `音節「${s}」は既に使用済みです` }
+  // 単語を提出
+  const submitWord = useCallback(async () => {
+    if (!inputWord.trim()) {
+      setGameData((prev) => ({ ...prev, errorMessage: "単語を入力してください" }))
+      return
+    }
+
+    if (gameData.gameState !== "playing") {
+      return
+    }
+
+    setIsValidatingWord(true)
+    setGameData((prev) => ({ ...prev, errorMessage: "" }))
+    
+    try {
+      // 単語の基本チェック（API呼び出し前）
+      if (inputWord.length < 4) {
+        setGameData((prev) => ({ ...prev, errorMessage: "4文字以上の単語を入力してください" }))
+        setIsValidatingWord(false)
+        return
+      }
+
+      if (inputWord.startsWith("ん")) {
+        setGameData((prev) => ({ ...prev, errorMessage: "「ん」で始まる単語は使用できません" }))
+        setIsValidatingWord(false)
+        return
+      }
+
+      if (inputWord.endsWith("ん")) {
+        const winner = gameData.currentPlayer === 1 ? 2 : 1
+        setGameData((prev) => ({ 
+          ...prev, 
+          gameState: "finished", 
+          winner, 
+          errorMessage: `「ん」で終わる単語を使ったため、プレイヤー${gameData.currentPlayer}の敗北です！` 
+        }))
+        setIsValidatingWord(false)
+        return
+      }
+
+      // 使用済み単語チェック
+      if (gameData.usedWords.includes(inputWord)) {
+        setGameData((prev) => ({ ...prev, errorMessage: "この単語は既に使用されています" }))
+        setIsValidatingWord(false)
+        return
+      }
+
+      // しりとりの規則チェック
+      if (gameData.lastWord) {
+        const lastSyllables = splitToSyllables(gameData.lastWord)
+        const currentSyllables = splitToSyllables(inputWord)
+        const lastSyllable = getEffectiveLastSyllable(lastSyllables)
+        const firstSyllable = currentSyllables[0]
+        
+        if (lastSyllable !== firstSyllable) {
+          setGameData((prev) => ({ 
+            ...prev, 
+            errorMessage: `「${lastSyllable}」で始まる単語を入力してください（前の単語: ${gameData.lastWord}）` 
+          }))
+          setIsValidatingWord(false)
+          return
         }
       }
 
-      // その他のチェック
-      if (word.length < 4) {
-        return { valid: false, error: "4文字以上の単語を入力してください" }
-      }
-      if (gameData.usedWords.includes(word)) {
-        return { valid: false, error: "この単語は既に使用されています" }
-      }
-
+      // 音節チェック
+      const syllables = splitToSyllables(inputWord)
+      
+      // 3音節以上かチェック
       if (syllables.length < 3) {
-        return { valid: false, error: "3音節以上の単語を入力してください" }
+        setGameData((prev) => ({ ...prev, errorMessage: "3音節以上の単語を入力してください" }))
+        setIsValidatingWord(false)
+        return
       }
 
       // 2文字目以降で同じ音節の重複チェック
       const syllablesFromSecond = syllables.slice(1)
       const uniqueSyllables = new Set(syllablesFromSecond)
       if (syllablesFromSecond.length !== uniqueSyllables.size) {
-        return { valid: false, error: "2文字目以降で同じ音節を複数回使うことはできません" }
-      }
-
-      // 「ん」で始まる単語は不可
-      if (syllables[0] === "ん") {
-        return { valid: false, error: "「ん」で始まる単語は使用できません" }
-      }
-
-      // 最終音節が「ん」の場合は敗北
-      const effectiveLast = getEffectiveLastSyllable(syllables)
-      if (effectiveLast === "ん") {
-        return { valid: false, error: "「ん」で終わる単語を使うと敗北です" }
-      }
-
-      if (gameData.lastWord) {
-        const lastSyllables = splitToSyllables(gameData.lastWord)
-        const lastEffective = getEffectiveLastSyllable(lastSyllables)
-        if (syllables[0] !== lastEffective) {
-          return { valid: false, error: `「${lastEffective}」で始まる単語を入力してください` }
-        }
-      }
-
-      // Yahoo APIで日本語として有効かチェック
-      const apiResult = await validateWordWithAPI(word)
-      if (!apiResult.isValid) {
-        return { valid: false, error: `${apiResult.reason}` }
-      }
-
-      return { valid: true, error: "" }
-    },
-    [gameData, splitToSyllables, validateWordWithAPI],
-  )
-
-  // リアルタイム検証（デバウンス付き）
-  useEffect(() => {
-    if (gameData.gameState !== "playing" || !inputWord.trim()) {
-      setValidationState({ valid: false, error: "", warning: "" })
-      return
-    }
-
-    const timeoutId = setTimeout(async () => {
-      setIsValidatingWord(true)
-      try {
-        const validation = await validateWord(inputWord)
-        if (!validation.valid) {
-          setValidationState({ valid: false, error: validation.error, warning: "" })
-        } else {
-          setValidationState({ valid: true, error: "", warning: "この単語は使用可能です" })
-        }
-      } catch (error) {
-        setValidationState({ valid: false, error: "検証中にエラーが発生しました", warning: "" })
-      } finally {
+        setGameData((prev) => ({ ...prev, errorMessage: "2文字目以降で同じ音節を複数回使うことはできません" }))
         setIsValidatingWord(false)
-      }
-    }, 500) // 500ms のデバウンス
-
-    return () => clearTimeout(timeoutId)
-  }, [inputWord, validateWord, gameData.gameState])
-
-  // 単語を提出
-  const submitWord = useCallback(async () => {
-    setIsValidatingWord(true)
-    try {
-      const validation = await validateWord(inputWord)
-      if (!validation.valid) {
-        if (validation.error.includes("敗北")) {
-          const winner = gameData.currentPlayer === 1 ? 2 : 1
-          setGameData((prev) => ({ ...prev, gameState: "finished", winner, errorMessage: validation.error }))
-        } else {
-          setGameData((prev) => ({ ...prev, errorMessage: validation.error }))
-        }
         return
       }
 
-      const syllables = splitToSyllables(inputWord)
+      const currentPlayerSyllables = gameData.currentPlayer === 1 ? gameData.player1Syllables : gameData.player2Syllables
+      const syllablesToRemove = syllables.slice(1)
+      
+      for (const syllable of syllablesToRemove) {
+        if (!currentPlayerSyllables.has(syllable)) {
+          setGameData((prev) => ({ 
+            ...prev, 
+            errorMessage: `音節「${syllable}」は既に使用済みです` 
+          }))
+          setIsValidatingWord(false)
+          return
+        }
+      }
+
+      // Jisho APIで単語の有効性をチェック
+      const apiResult = await validateWordWithAPI(inputWord)
+      if (!apiResult.isValid) {
+        setGameData((prev) => ({ ...prev, errorMessage: `${apiResult.reason}` }))
+        setIsValidatingWord(false)
+        return
+      }
+
+      // 全てのチェックを通過した場合、ターンを進める
       const toRemove = syllables.slice(1)
       setGameData((prev) => {
         const p1 = new Set(prev.player1Syllables)
@@ -325,7 +314,7 @@ export default function Component() {
             lastWord: inputWord,
             gameState: "finished",
             winner: win1 ? 1 : 2,
-            errorMessage: "",
+            errorMessage: `プレイヤー${win1 ? 1 : 2}の勝利！`
           }
         }
         return {
@@ -340,10 +329,13 @@ export default function Component() {
         }
       })
       setInputWord("")
+    } catch (error) {
+      console.error("Submit word error:", error)
+      setGameData((prev) => ({ ...prev, errorMessage: "単語の検証中にエラーが発生しました" }))
     } finally {
       setIsValidatingWord(false)
     }
-  }, [inputWord, validateWord, splitToSyllables, gameData.currentPlayer])
+  }, [inputWord, gameData, splitToSyllables, validateWordWithAPI])
 
   // ゲーム開始
   const startGame = () => {
@@ -431,15 +423,13 @@ export default function Component() {
                     placeholder={
                       lastSyllable ? `「${lastSyllable}」で始まる単語を入力` : "4文字以上の単語を入力してください"
                     }
-                    onKeyPress={(e) => e.key === "Enter" && validationState.valid && !isValidatingWord && submitWord()}
-                    className={
-                      validationState.error ? "border-red-500" : validationState.valid ? "border-green-500" : ""
-                    }
+                    onKeyPress={(e) => e.key === "Enter" && inputWord.trim() && !isValidatingWord && submitWord()}
+                    className=""
                     disabled={isValidatingWord}
                   />
                   <Button
                     onClick={submitWord}
-                    disabled={!inputWord.trim() || !validationState.valid || isValidatingWord}
+                    disabled={!inputWord.trim() || isValidatingWord}
                   >
                     {isValidatingWord ? (
                       <>
@@ -451,18 +441,6 @@ export default function Component() {
                     )}
                   </Button>
                 </div>
-                {/* リアルタイム検証結果表示 */}
-                {inputWord.trim() && (
-                  <div className="text-sm">
-                    {isValidatingWord && <p className="text-blue-500">🔍 単語を検証中...</p>}
-                    {!isValidatingWord && validationState.error && (
-                      <p className="text-red-500">❌ {validationState.error}</p>
-                    )}
-                    {!isValidatingWord && validationState.warning && (
-                      <p className="text-green-600">✅ {validationState.warning}</p>
-                    )}
-                  </div>
-                )}
               </div>
               {gameData.errorMessage && <p className="text-red-500 text-sm">{gameData.errorMessage}</p>}
             </div>
@@ -566,7 +544,7 @@ export default function Component() {
             <li>「ん」で始まる単語は使用不可</li>
             <li>「ん」で終わる単語を使うと即敗北</li>
             <li>制限時間は各ターン60秒</li>
-            <li>Yahoo! JAPAN APIで日本語として有効な単語かチェック</li>
+            <li>Jisho APIで日本語として有効な単語かチェック</li>
           </ul>
         </CardContent>
       </Card>
